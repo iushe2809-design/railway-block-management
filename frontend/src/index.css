@@ -1,0 +1,3 @@
+@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
+@tailwind base; @tailwind components; @tailwind utilities;
+:root{--navy:#0f172a;--ink:#111827;--muted:#64748b;--line:#e2e8f0;--bg:#f8fafc;--blue:#2563eb;--green:#16a34a;--yellow:#ca8a04;--red:#dc2626;--orange:#ea580c}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans',sans-serif}button,input,select,textarea{font:inherit}button{cursor:pointer}h1,h2,h3,b,strong{font-family:Chivo,sans-serif}h1{letter-spacing:0}small{display:block}

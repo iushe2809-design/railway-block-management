@@ -1,0 +1,145 @@
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header
+from fastapi.responses import StreamingResponse
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field
+from typing import Optional
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+import os, uuid, bcrypt, jwt, io, csv
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / ".env")
+mongo_url = os.environ["MONGO_URL"]
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ["DB_NAME"]]
+app = FastAPI(title="Railway Block Management System")
+api = APIRouter(prefix="/api")
+JWT_SECRET = os.environ.get("JWT_SECRET", "rbms-demo-secret-change-me")
+ALGO = "HS256"
+
+SECTIONS = ["MURI - GDBR", "GDBR – CNI", "Muri-BRKA", "RNC-LAD", "LAD-TORI", "HTE-MURI DOWN LINE"]
+DEPARTMENTS = ["Engineering", "Operations", "S&T", "Electrical", "Mechanical", "Commercial", "Other"]
+LINES = ["UP", "DN", "Single", "UP/DN", "Common", "Loop"]
+
+def now(): return datetime.now(timezone.utc).isoformat()
+def minutes(value):
+    h, m = map(int, value.split(":")); return h * 60 + m
+def duration(start, end):
+    diff = max(0, minutes(end) - minutes(start)); return f"{diff // 60}h {diff % 60:02d}m"
+def corridor_status(start, end, cstart, cend, margin=30):
+    s, e, cs, ce = minutes(start), minutes(end), minutes(cstart), minutes(cend)
+    if s >= cs and e <= ce: return "STRICTLY INSIDE CORRIDOR"
+    if s <= ce and e >= cs and s >= cs - margin and e <= ce + margin: return "NEARLY CORRIDOR"
+    if s <= ce and e >= cs: return "PARTIAL OVERLAP"
+    return "COMPLETELY OUTSIDE CORRIDOR"
+
+class Login(BaseModel): employee_id: str; password: str
+class BlockIn(BaseModel):
+    date: str; major_section: str; sub_section: str = "Sec 1"; department: str
+    line: str; description: str; demanded_start: str = ""; demanded_end: str = ""
+    allowed_start: str; allowed_end: str; cancelled_at: Optional[str] = None
+    cancellation_type: str = "Normal"; progress: str = ""; repercussion: str = "Nil"
+    is_rbp: bool = False; remarks: str = ""
+class Decision(BaseModel): reason: str = ""
+
+def hash_password(password): return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+def safe_user(user):
+    return {"id": user["id"], "employee_id": user["employee_id"], "name": user["name"], "role": user["role"], "department": user.get("department", "")}
+def token(user): return jwt.encode({"sub": user["id"], "exp": datetime.now(timezone.utc) + timedelta(hours=8)}, JWT_SECRET, algorithm=ALGO)
+
+async def current_user(authorization: str = Header(default="")):
+    if not authorization.startswith("Bearer "): raise HTTPException(401, "Please sign in")
+    try: payload = jwt.decode(authorization[7:], JWT_SECRET, algorithms=[ALGO])
+    except jwt.InvalidTokenError: raise HTTPException(401, "Session expired")
+    user = await db.users.find_one({"id": payload.get("sub")}, {"_id": 0})
+    if not user: raise HTTPException(401, "User not found")
+    return user
+def require(*roles):
+    async def check(user=Depends(current_user)):
+        if user["role"] not in roles: raise HTTPException(403, "This role cannot access this area")
+        return user
+    return check
+
+async def seed():
+    users = [("ADMIN001", "Admin Control", "admin", "Operations", "Admin@123"), ("OFFICER001", "A. Kumar", "officer", "Operations", "Officer@123"), ("USER001", "R. Singh", "data_entry", "Engineering", "User@123")]
+    for eid, name, role, dept, password in users:
+        if not await db.users.find_one({"employee_id": eid}):
+            await db.users.insert_one({"id": str(uuid.uuid4()), "employee_id": eid, "name": name, "role": role, "department": dept, "password_hash": hash_password(password), "status": "active", "created_at": now()})
+    if await db.corridors.count_documents({}) == 0:
+        data = [{"id": str(uuid.uuid4()), "major_section": s, "sub_section": f"Sec {i+1}", "corridor_start": a, "corridor_end": b, "margin_minutes": 30, "active": True} for i, (s, a, b) in enumerate([(SECTIONS[0], "12:10", "14:10"), (SECTIONS[1], "10:30", "12:10"), (SECTIONS[2], "10:30", "13:00"), (SECTIONS[3], "08:00", "10:00"), (SECTIONS[4], "14:00", "16:00"), (SECTIONS[5], "10:50", "12:50")])]
+        await db.corridors.insert_many(data)
+    if await db.blocks.count_documents({}) == 0:
+        samples = [("2026-08-18", SECTIONS[0], "Engineering", "UP", "Track maintenance", "12:15", "14:00", "APPROVED", "STRICTLY INSIDE CORRIDOR"), ("2026-08-18", SECTIONS[1], "S&T", "DN", "Signal testing", "10:10", "12:00", "PENDING", "NEARLY CORRIDOR"), ("2026-08-19", SECTIONS[2], "Electrical", "Single", "OHE repair", "10:50", "13:00", "COMPLETED", "STRICTLY INSIDE CORRIDOR")]
+        await db.blocks.insert_many([{"id": str(uuid.uuid4()), "block_id": f"RB-{2026+i:04d}", "date": d, "major_section": s, "sub_section": "Sec 1", "department": dept, "line": line, "description": desc, "allowed_start": st, "allowed_end": en, "duration": duration(st, en), "status": status, "corridor_status": cs, "submitted_by": "USER001", "created_at": now(), "cancellation_type": "Normal", "is_rbp": False, "remarks": "Imported from workbook"} for i, (d,s,dept,line,desc,st,en,status,cs) in enumerate(samples)])
+
+@app.on_event("startup")
+async def startup(): await seed()
+@api.post("/auth/login")
+async def login(data: Login):
+    user = await db.users.find_one({"employee_id": data.employee_id.upper()}, {"_id": 0})
+    if not user or not bcrypt.checkpw(data.password.encode(), user["password_hash"].encode()): raise HTTPException(401, "Invalid employee ID or password")
+    return {"token": token(user), "user": safe_user(user)}
+@api.get("/auth/me")
+async def me(user=Depends(current_user)): return safe_user(user)
+@api.post("/auth/logout")
+async def logout(user=Depends(current_user)): return {"ok": True}
+
+@api.get("/meta")
+async def meta(user=Depends(current_user)):
+    corridors = await db.corridors.find({}, {"_id": 0}).to_list(100)
+    return {"sections": SECTIONS, "departments": DEPARTMENTS, "lines": LINES, "corridors": corridors}
+@api.get("/dashboard")
+async def dashboard(user=Depends(current_user)):
+    blocks = await db.blocks.find({}, {"_id": 0}).to_list(1000)
+    today = datetime.now().date().isoformat(); todays = [b for b in blocks if b["date"] == today]
+    counts = {k: sum(1 for b in blocks if b["status"] == k) for k in ["APPROVED", "PENDING", "REJECTED", "COMPLETED", "CANCELLED"]}
+    return {"total": len(todays) or len(blocks), "active": counts["APPROVED"], "completed": counts["COMPLETED"], "pending": counts["PENDING"], "cancelled": counts["CANCELLED"], "rt": sum(b.get("cancellation_type") == "RT" for b in blocks), "bt": sum(b.get("cancellation_type") == "BT" for b in blocks), "burst": sum(b.get("cancellation_type") == "Burst" for b in blocks), "rbp": sum(b.get("is_rbp", False) for b in blocks), "hours": round(sum(max(0, minutes(b["allowed_end"]) - minutes(b["allowed_start"])) for b in blocks) / 60, 1), "statuses": counts, "sections": [{"name": s, "value": sum(b["major_section"] == s for b in blocks)} for s in SECTIONS], "departments": [{"name": d, "value": sum(b["department"] == d for b in blocks)} for d in DEPARTMENTS], "compliance": [{"name": k, "value": sum(b.get("corridor_status") == k for b in blocks)} for k in ["STRICTLY INSIDE CORRIDOR", "NEARLY CORRIDOR", "PARTIAL OVERLAP", "COMPLETELY OUTSIDE CORRIDOR"]]}
+@api.get("/blocks")
+async def list_blocks(search: str = "", status: str = "", user=Depends(current_user)):
+    query = {} if user["role"] in ["admin", "officer"] else {"submitted_by": user["employee_id"]}
+    if status: query["status"] = status
+    blocks = await db.blocks.find(query, {"_id": 0}).sort("date", -1).to_list(1000)
+    if search: blocks = [b for b in blocks if search.lower() in str(b).lower()]
+    return blocks
+@api.post("/blocks")
+async def create_block(data: BlockIn, user=Depends(require("admin", "officer", "data_entry"))):
+    corridor = await db.corridors.find_one({"major_section": data.major_section}, {"_id": 0})
+    if not corridor: raise HTTPException(400, "No corridor timing found for this section")
+    status = corridor_status(data.allowed_start, data.allowed_end, corridor["corridor_start"], corridor["corridor_end"])
+    conflicts = await db.blocks.find({"date": data.date, "major_section": data.major_section, "line": data.line, "status": {"$in": ["APPROVED", "PENDING"]}}, {"_id": 0}).to_list(50)
+    s, e = minutes(data.allowed_start), minutes(data.allowed_end)
+    overlap = [b for b in conflicts if minutes(b["allowed_start"]) < e and minutes(b["allowed_end"]) > s]
+    doc = data.model_dump(); doc.update({"id": str(uuid.uuid4()), "block_id": f"RB-{datetime.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}", "duration": duration(data.allowed_start, data.allowed_end), "corridor_status": status, "corridor_start": corridor["corridor_start"], "corridor_end": corridor["corridor_end"], "status": "PENDING", "submitted_by": user["employee_id"], "conflict": bool(overlap), "created_at": now()})
+    await db.blocks.insert_one(doc)
+    doc.pop("_id", None)
+    return {"block": doc, "conflicts": overlap}
+@api.patch("/blocks/{block_id}")
+async def decide(block_id: str, data: Decision, user=Depends(require("admin", "officer"))):
+    block = await db.blocks.find_one({"id": block_id}, {"_id": 0})
+    if not block: raise HTTPException(404, "Block not found")
+    action = data.reason.split("|", 1)[0] if data.reason else "APPROVED"; reason = data.reason.split("|", 1)[1] if "|" in data.reason else ""
+    if action not in ["APPROVED", "REJECTED", "MODIFICATION REQUESTED"]: action = "APPROVED"
+    await db.blocks.update_one({"id": block_id}, {"$set": {"status": action, "decision_reason": reason, "approved_by": user["employee_id"], "updated_at": now()}})
+    return {"ok": True, "status": action}
+@api.get("/slots")
+async def slots(date: str, major_section: str, line: str = "UP", min_duration: int = 60, user=Depends(require("admin", "officer"))):
+    corridor = await db.corridors.find_one({"major_section": major_section}, {"_id": 0}); blocks = await db.blocks.find({"date": date, "major_section": major_section, "line": line, "status": {"$in": ["APPROVED", "PENDING"]}}, {"_id": 0}).to_list(100)
+    windows = [("06:00", "08:00"), ("08:00", "10:00"), ("10:00", "12:00"), ("12:10", "14:10"), ("14:10", "16:00"), ("16:00", "18:00")]
+    out=[]
+    for st,en in windows:
+        occupied=any(minutes(b["allowed_start"]) < minutes(en) and minutes(b["allowed_end"]) > minutes(st) for b in blocks)
+        if minutes(en)-minutes(st) >= min_duration: out.append({"start":st,"end":en,"duration":duration(st,en),"status":"Occupied" if occupied else "Available","corridor": corridor and corridor["corridor_start"] <= st <= corridor["corridor_end"]})
+    return out
+@api.get("/notifications")
+async def notifications(user=Depends(current_user)): return [{"id":"n1","title":"Pending request requires review","detail":"RB-260818-A91 is awaiting officer approval","time":"12 min ago","type":"warning"},{"id":"n2","title":"Corridor check complete","detail":"MURI - GDBR is strictly inside corridor","time":"Today","type":"success"}]
+@api.get("/reports/export")
+async def export_report(user=Depends(require("admin", "officer"))):
+    blocks=await db.blocks.find({}, {"_id":0}).to_list(1000); stream=io.StringIO(); writer=csv.DictWriter(stream, fieldnames=["block_id","date","major_section","department","line","allowed_start","allowed_end","duration","corridor_status","status"]); writer.writeheader(); writer.writerows([{k:b.get(k,"") for k in writer.fieldnames} for b in blocks]); stream.seek(0); return StreamingResponse(iter([stream.getvalue()]), media_type="text/csv", headers={"Content-Disposition":"attachment; filename=railway-block-report.csv"})
+@api.get("/")
+async def root(): return {"message":"Railway Block Management API"}
+app.include_router(api)
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=[os.environ.get("CORS_ORIGINS", "*")], allow_methods=["*"], allow_headers=["*"])
+@app.on_event("shutdown")
+async def shutdown(): client.close()

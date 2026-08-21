@@ -1,0 +1,48 @@
+{
+  "project_name": "Railway Block Management System (RBMS)",
+  "context_type": "hybrid_fullstack enterprise operations dashboard",
+  "emotional_tone": "Authoritative, Precise, Safe, Operational Trust",
+  "typography": {
+    "heading_font": "Chivo, sans-serif",
+    "body_font": "IBM Plex Sans, sans-serif",
+    "mono_font": "JetBrains Mono, monospace"
+  },
+  "colors": {
+    "primary": "#0F172A",
+    "primary_hover": "#1E293B",
+    "background": "#F8FAFC",
+    "surface": "#FFFFFF",
+    "card_border": "#E2E8F0",
+    "text_main": "#0F172A",
+    "text_muted": "#64748B",
+    "accent_green": "#16A34A",
+    "accent_red": "#DC2626",
+    "accent_yellow": "#CA8A04",
+    "accent_blue": "#2563EB"
+  },
+  "grids": {
+    "dashboard_layout": "grid-cols-1 md:grid-cols-4 gap-6",
+    "bento_layout": "grid-cols-1 lg:grid-cols-12 gap-8"
+  },
+  "motion": {
+    "transition": "transition-all duration-200 ease-in-out",
+    "hover_lift": "hover:-translate-y-0.5 hover:shadow-md"
+  },
+  "accessibility": {
+    "contrast_ratio": "APCA 4.5:1 minimum for body, 3:1 for large text",
+    "interactive_focus": "focus:ring-2 focus:ring-blue-600 focus:outline-none"
+  },
+  "image_urls": [
+    {
+      "category": "hero_banner",
+      "description": "Railway tracks control room operations",
+      "url": "https://images.unsplash.com/photo-1579719558505-ad4a5fee0847?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjV8MHwxfHNlYXJjaHwyfHxyYWlsd2F5JTIwdHJhY2tzJTIwY29udHJvbCUyMHJvb20lMjBvcGVyYXRpb25zfGVufDB8fHx8MTc4NzMyNSQxM3ww&ixlib=rb-4.1.0&q=85"
+    },
+    {
+      "category": "control_cabin",
+      "description": "Train operator control panel",
+      "url": "https://images.pexels.com/photos/35592177/pexels-photo-35592177.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    }
+  ],
+  "instructions_to_main_agent": "Implement a full Railway Block Management System (RBMS) replacing Excel systems. Support 3 roles: Block Data Entry User, Officer, and Admin. Include dashboards, block data entry form with live duration calculation, corridor validation (STRICTLY INSIDE, NEARLY CORRIDOR ±30m, PARTIAL OVERLAP, COMPLETELY OUTSIDE), free corridor slot finder with USE THIS SLOT, calendar timeline, section/department analysis, cancellation analysis, PDF/Excel report export, audit logs, conflict detection, officer approval workflow, and full mock demo accounts."
+}

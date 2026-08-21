@@ -1,0 +1,19 @@
+{
+  "summary": "Backend regression passed 6/6. Officer end-to-end flows pass, including New Block, 1h45m corridor validation, pending submission, six slot rows, slot reuse, block filtering, and mobile layout. Data-entry Slot Finder navigation exposes a forbidden API error as an unhandled React runtime overlay.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [{"component": "Data-entry Free Slot Finder", "issue": "Clicking Free Slot Finder as USER001 calls the officer-only /api/slots endpoint, receives 403, and displays an unhandled React runtime error overlay instead of a friendly restriction/error state.", "selector": "[data-testid=nav-free-slot-finder]", "priority": "HIGH"}],
+    "integration_issues": [{"flow": "USER001 → Free Slot Finder", "issue": "Role-restricted API is not guarded in the UI; axios rejection is unhandled and the page crashes.", "affected_selectors": ["[data-testid=nav-free-slot-finder]", "[data-testid=find-slots-button]"]}],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_rbms_regression.py", "/app/test_reports/pytest/pytest_results_iteration2.xml"],
+  "action_items": ["Hide Free Slot Finder from data-entry users or handle 403 with an inline access-denied state; do not allow an unhandled axios rejection to trigger the React runtime overlay.", "Retest data-entry navigation after the role restriction fix."],
+  "critical_code_review_comments": ["Slots find() has no catch/error state; its officer-only 403 rejection is unhandled. Navigation currently exposes this action to every role."],
+  "updated_files": ["/app/test_reports/iteration_2.json"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "90% (officer flows and mobile pass; data-entry restricted flow fails)"},
+  "seed_data_creation": "The existing regression test created TEST_regression pending records; no cleanup endpoint was available.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "Previous NewBlock destroy cleanup issue is fixed. Officer flow verified. Focus retest on USER001 Free Slot Finder access/error handling; approval click and CSV download control were not fully asserted in this run.",
+  "rca of the issue": "App.js renders Free Slot Finder for data_entry because Shell filters only My Requests. Slots.find directly returns api.get(...).then(...) without catch or error state. Backend correctly returns 403 via require('admin','officer'), but the rejected promise propagates into the React runtime overlay."
+}

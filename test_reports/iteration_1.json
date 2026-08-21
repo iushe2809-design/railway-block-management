@@ -1,0 +1,19 @@
+{
+  "summary": "API regression passed after fixing block-create MongoDB serialization; frontend login/dashboard load, but navigation to New Block crashes React.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [{"component": "NewBlock/route navigation", "issue": "React runtime overlay appears with 'destroy is not a function' when navigating from dashboard to New Block; form never loads.", "selector": "[data-testid=nav-new-block-request]", "priority": "CRITICAL"}],
+    "integration_issues": [{"flow": "Dashboard → New Block Request", "issue": "Unmount cleanup throws because an async axios Promise is returned directly from useEffect; subsequent route content is unavailable.", "affected_selectors": ["[data-testid=nav-new-block-request]", "[data-testid=live-corridor-status]"]}],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_rbms_regression.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": ["Change NewBlock and Slots useEffect callbacks to use a braced async function with no returned Promise; retest all route navigation."],
+  "critical_code_review_comments": ["Never return api.get(...).then(...) from React useEffect; React treats the Promise as cleanup and calls destroy on unmount."],
+  "updated_files": ["/app/backend/server.py", "/app/backend/tests/test_rbms_regression.py", "/app/test_reports/iteration_1.json"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "25% (login/dashboard only; critical route flow failed)"},
+  "seed_data_creation": "One TEST_regression pending block was created by the API test; no cleanup endpoint was available.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "Backend auth, dashboard, role restriction, create/duration/corridor, slots, and CSV export passed. Frontend login/dashboard passed; New Block navigation crashes before form render, so approval, slot action, mobile overflow, and full UI flow remain unverified.",
+  "rca of the issue": "NewBlock has useEffect(()=>api.get('/meta',hdr).then(...),[]), which returns the axios Promise. React interprets the returned value as an effect cleanup function; on route unmount it invokes the Promise as destroy and throws TypeError: destroy is not a function. Slots has the same pattern and should be corrected proactively."
+}
