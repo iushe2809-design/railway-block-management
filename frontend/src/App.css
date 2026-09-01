@@ -44,3 +44,41 @@
 .secondary-button.small{padding:6px 10px;font-size:12px}
 .field-grid .span-2{grid-column:span 2}
 .admin-label{margin-top:12px !important}
+
+/* --- audit trail --- */
+.icon-action.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.icon-action.ghost:hover{color:var(--navy);border-color:var(--navy)}
+tr.row-expanded{background:#f8fafc}
+tr.audit-row td{background:#f8fafc;padding:0}
+.audit-strip{padding:16px 24px;display:flex;flex-direction:column;gap:12px;border-left:3px solid var(--navy);margin:8px 12px 12px 20px;background:#fff;border-radius:8px;box-shadow:inset 0 0 0 1px var(--line)}
+.audit-strip.empty,.audit-strip.loading-strip{color:var(--muted);text-align:center;font-size:13px;padding:18px;border-left:none;font-style:italic}
+.audit-item{display:flex;gap:14px;align-items:flex-start;position:relative}
+.audit-dot{width:10px;height:10px;border-radius:50%;background:var(--navy);margin-top:6px;flex-shrink:0}
+.audit-item.action-submitted .audit-dot{background:var(--blue)}
+.audit-item.action-approved .audit-dot{background:var(--green)}
+.audit-item.action-rejected .audit-dot{background:var(--red)}
+.audit-item.action-modification-requested .audit-dot{background:var(--orange)}
+.audit-item.action-imported .audit-dot{background:#7c3aed}
+.audit-body{display:flex;flex-direction:column;gap:2px}
+.audit-body b{font-size:13px;color:var(--navy)}
+.audit-who{color:var(--ink);font-size:12px}
+.audit-who small{color:var(--muted);text-transform:capitalize}
+.audit-body small{color:var(--muted);font-size:11.5px}
+.audit-time{font-family:'JetBrains Mono',monospace;color:var(--muted) !important}
+
+/* --- reports studio --- */
+.report-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px;margin-top:8px}
+.report-card{padding:22px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.report-icon{width:44px;height:44px;background:#eef2ff;color:#4338ca;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:6px}
+.report-card.csv .report-icon{background:#ecfdf5;color:#166534}
+.report-card h3{margin:0;font-size:16px}
+.report-card p{margin:0 0 10px;color:var(--muted);font-size:13px;line-height:1.4}
+.report-status{margin-top:16px;padding:14px 18px;color:var(--navy);font-weight:600}
+
+/* --- file drop / excel import --- */
+.import-form{padding:16px;display:flex;flex-direction:column;gap:14px}
+.file-drop{border:1.5px dashed var(--line);border-radius:12px;padding:26px;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;transition:border-color .2s,background .2s;text-align:center}
+.file-drop:hover{border-color:var(--navy);background:#f8fafc}
+.file-drop b{font-size:14px;color:var(--navy)}
+.file-drop small{color:var(--muted);font-size:12px}
+.file-drop input[type="file"]{display:none}

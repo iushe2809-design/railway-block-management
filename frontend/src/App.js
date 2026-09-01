@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { BrowserRouter, useLocation, useNavigate } from "react-router-dom";
-import { Bell, CalendarDays, Check, ChevronRight, ClipboardList, Clock3, FileBarChart, LayoutDashboard, LogOut, Menu, Plus, Search, Settings, ShieldCheck, SlidersHorizontal, TrainFront, Users, X, UserPlus, Route } from "lucide-react";
+import { Bell, CalendarDays, Check, ChevronRight, ClipboardList, Clock3, FileBarChart, FileText, LayoutDashboard, LogOut, Menu, Plus, Search, Settings, ShieldCheck, SlidersHorizontal, TrainFront, Upload, UserPlus, Users, X, Route, History } from "lucide-react";
 import "@/App.css";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -310,11 +310,37 @@ function NewBlock({ user }) {
   );
 }
 
-/* ---------- blocks list ---------- */
+/* ---------- blocks list with expandable audit strip ---------- */
+function AuditStrip({ blockId }) {
+  const [logs, setLogs] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    api.get(`/blocks/${blockId}/audit`, hdr()).then(r => alive && setLogs(r.data)).catch(() => alive && setLogs([]));
+    return () => { alive = false; };
+  }, [blockId]);
+  if (logs === null) return <div className="audit-strip loading-strip">Loading audit trail…</div>;
+  if (!logs.length) return <div className="audit-strip empty">No audit events for this block yet.</div>;
+  return (
+    <div className="audit-strip" data-testid={`audit-strip-${blockId}`}>
+      {logs.map(l => (
+        <div className={`audit-item action-${l.action.toLowerCase().replace(" ", "-")}`} key={l.id}>
+          <div className="audit-dot" />
+          <div className="audit-body">
+            <b>{l.action}</b>
+            <span className="audit-who">{l.actor_name} <small>({l.actor_role})</small></span>
+            {l.detail && <small>{l.detail}</small>}
+            <small className="audit-time">{(l.timestamp || "").replace("T", " ").slice(0, 16)}</small>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 function Blocks({ user }) {
   const [blocks, setBlocks] = useState([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [expanded, setExpanded] = useState(null);
   const fetchBlocks = useCallback(async () => {
     try { const r = await api.get(`/blocks?search=${encodeURIComponent(search)}&status=${status}`, hdr()); setBlocks(r.data); } catch (_) { }
   }, [search, status]);
@@ -332,7 +358,7 @@ function Blocks({ user }) {
   return (
     <>
       <div className="page-heading compact">
-        <div><p className="eyebrow">OPERATIONS REGISTER · LIVE</p><h1>{user.role === "data_entry" ? "My requests" : "All blocks"}</h1><p className="subhead">Search, review and action railway block records.</p></div>
+        <div><p className="eyebrow">OPERATIONS REGISTER · LIVE</p><h1>{user.role === "data_entry" ? "My requests" : "All blocks"}</h1><p className="subhead">Search, review and action railway block records. Click a row to see who touched it and when.</p></div>
         <button data-testid="export-csv-button" className="secondary-button" onClick={exportCsv}><FileBarChart size={16} /> Export CSV</button>
       </div>
       <section className="panel table-panel">
@@ -344,10 +370,11 @@ function Blocks({ user }) {
         </div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Block ID</th><th>Date / section</th><th>Department</th><th>Window</th><th>Compliance</th><th>Status</th>{user.role !== "data_entry" && <th>Action</th>}</tr></thead>
+            <thead><tr><th></th><th>Block ID</th><th>Date / section</th><th>Department</th><th>Window</th><th>Compliance</th><th>Status</th>{user.role !== "data_entry" && <th>Action</th>}</tr></thead>
             <tbody>
-              {blocks.map(b =>
-                <tr data-testid={`block-row-${b.block_id}`} key={b.id}>
+              {blocks.map(b => [
+                <tr data-testid={`block-row-${b.block_id}`} key={b.id} className={expanded === b.id ? "row-expanded" : ""}>
+                  <td><button data-testid={`toggle-audit-${b.block_id}`} className="icon-action ghost" title="View audit trail" onClick={() => setExpanded(expanded === b.id ? null : b.id)}><History size={15} /></button></td>
                   <td><b className="mono">{b.block_id}</b><small>{b.description}</small></td>
                   <td><b>{b.date}</b><small>{b.major_section} · {b.line}</small></td>
                   <td>{b.department}</td>
@@ -357,8 +384,13 @@ function Blocks({ user }) {
                   {user.role !== "data_entry" && <td>{b.status === "PENDING"
                     ? <div className="row-actions"><button data-testid={`approve-${b.block_id}`} className="icon-action approve" onClick={() => decide(b, "APPROVED")}><Check size={15} /></button><button data-testid={`reject-${b.block_id}`} className="icon-action reject" onClick={() => decide(b, "REJECTED")}><X size={15} /></button></div>
                     : <span className="muted">Reviewed</span>}</td>}
-                </tr>
-              )}
+                </tr>,
+                expanded === b.id ? (
+                  <tr className="audit-row" key={b.id + "-audit"}>
+                    <td colSpan={user.role !== "data_entry" ? 8 : 7}><AuditStrip blockId={b.id} /></td>
+                  </tr>
+                ) : null
+              ])}
             </tbody>
           </table>
           {!blocks.length && <div className="empty" data-testid="blocks-empty-state">No blocks match your filters.</div>}
@@ -369,16 +401,17 @@ function Blocks({ user }) {
 }
 
 /* ---------- slot finder ---------- */
+const SLOT_PREFS_KEY = "rbms_slot_filters";
 function Slots() {
-  const [date, setDate] = useState("2026-08-25");
-  const [section, setSection] = useState("MURI - GDBR");
-  const [line, setLine] = useState("UP");
+  const saved = (() => { try { return JSON.parse(localStorage.getItem(SLOT_PREFS_KEY) || "{}"); } catch { return {}; } })();
+  const [date, setDate] = useState(saved.date || "2026-08-25");
+  const [section, setSection] = useState(saved.section || "MURI - GDBR");
+  const [line, setLine] = useState(saved.line || "UP");
   const [slots, setSlots] = useState([]);
   const [meta, setMeta] = useState({ sections: [] });
-  const [hasRun, setHasRun] = useState(false);
   useEffect(() => { api.get("/meta", hdr()).then(r => setMeta(r.data)); }, []);
+  useEffect(() => { localStorage.setItem(SLOT_PREFS_KEY, JSON.stringify({ date, section, line })); }, [date, section, line]);
   const find = useCallback(async () => {
-    setHasRun(true);
     try { const r = await api.get(`/slots?date=${date}&major_section=${encodeURIComponent(section)}&line=${line}&min_duration=60`, hdr()); setSlots(r.data); } catch (_) { }
   }, [date, section, line]);
   // auto-run on mount so returning to this page always shows the freshest slots
@@ -387,7 +420,7 @@ function Slots() {
   return (
     <>
       <div className="page-heading compact">
-        <div><p className="eyebrow">PLANNING TOOL · LIVE</p><h1>Free corridor / slot finder</h1><p className="subhead">Find an available operating window in seconds.</p></div>
+        <div><p className="eyebrow">PLANNING TOOL · LIVE</p><h1>Free corridor / slot finder</h1><p className="subhead">Find an available operating window in seconds. Your last search is remembered.</p></div>
       </div>
       <section className="panel finder-panel">
         <div className="finder-fields">
@@ -584,6 +617,94 @@ function UserManagement() {
   );
 }
 
+/* ---------- reports studio ---------- */
+function ReportsStudio() {
+  const [status, setStatus] = useState("");
+  const download = async (period) => {
+    setStatus(`Preparing ${period} PDF…`);
+    try {
+      const res = await fetch(`${API}/reports/pdf?period=${period}`, hdr());
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = `rbms-${period}-report.pdf`; a.click();
+      URL.revokeObjectURL(url);
+      setStatus(`Downloaded ${period} report`);
+    } catch (e) { setStatus("Could not generate PDF"); }
+  };
+  const downloadCsv = async () => {
+    const res = await fetch(`${API}/reports/export`, hdr());
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "rbms-block-register.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const cards = [
+    { period: "daily", title: "Daily report", subtitle: "Today's blocks & compliance", icon: CalendarDays },
+    { period: "weekly", title: "Weekly report", subtitle: "Last 7 days of operations", icon: FileBarChart },
+    { period: "monthly", title: "Monthly report", subtitle: "Last 30 days summary + register", icon: FileText },
+  ];
+  return (
+    <>
+      <div className="page-heading compact"><div><p className="eyebrow">REPORT STUDIO</p><h1>Reports</h1><p className="subhead">One-click PDF reports, ready to email to officers.</p></div></div>
+      <div className="report-grid" data-testid="reports-grid">
+        {cards.map(({ period, title, subtitle, icon: Icon }) => (
+          <div className="panel report-card" key={period} data-testid={`report-card-${period}`}>
+            <div className="report-icon"><Icon size={22} /></div>
+            <h3>{title}</h3>
+            <p>{subtitle}</p>
+            <button className="primary-button" data-testid={`download-${period}-report`} onClick={() => download(period)}><FileText size={15} /> Download PDF</button>
+          </div>
+        ))}
+        <div className="panel report-card csv">
+          <div className="report-icon"><FileBarChart size={22} /></div>
+          <h3>Block register (CSV)</h3>
+          <p>Full block ledger for spreadsheet analysis.</p>
+          <button className="secondary-button" data-testid="download-csv-report" onClick={downloadCsv}><FileBarChart size={15} /> Download CSV</button>
+        </div>
+      </div>
+      {status && <div className="panel report-status" data-testid="report-status">{status}</div>}
+    </>
+  );
+}
+
+/* ---------- excel import ---------- */
+function ExcelImport() {
+  const [file, setFile] = useState(null);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const upload = async e => {
+    e.preventDefault();
+    if (!file) return;
+    setBusy(true); setResult(null);
+    const fd = new FormData(); fd.append("file", file);
+    try {
+      const r = await axios.post(`${API}/admin/import`, fd, { headers: { ...hdr().headers, "Content-Type": "multipart/form-data" } });
+      setResult(r.data); emitRefresh();
+    } catch (err) { setResult({ error: err.response?.data?.detail || "Import failed" }); }
+    setBusy(false);
+  };
+  return (
+    <section className="panel form-panel">
+      <div className="panel-head"><div><p className="eyebrow">EXCEL ROUND-TRIP</p><h3>Import legacy .xlsx workbook</h3></div><Upload size={19} /></div>
+      <form onSubmit={upload} className="import-form" data-testid="excel-import-form">
+        <label className="file-drop">
+          <Upload size={22} />
+          <b>{file ? file.name : "Drop your workbook here or click to browse"}</b>
+          <small>.xlsx files with a Data Entry / Data Log sheet</small>
+          <input data-testid="excel-file-input" type="file" accept=".xlsx" onChange={e => setFile(e.target.files?.[0] || null)} />
+        </label>
+        <button data-testid="excel-import-button" className="primary-button" disabled={!file || busy}>{busy ? "Importing…" : "Import blocks"}</button>
+      </form>
+      {result && (
+        <div className={result.error ? "error-box" : "success-card"} data-testid="excel-import-result">
+          {result.error || `Imported ${result.imported} blocks · skipped ${result.skipped} (sheet: ${result.sheet})`}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* ---------- admin: corridor settings ---------- */
 function CorridorSettings() {
   const [corridors, setCorridors] = useState([]);
@@ -603,7 +724,8 @@ function CorridorSettings() {
   };
   return (
     <>
-      <div className="page-heading compact"><div><p className="eyebrow">ADMINISTRATION</p><h1>Corridor & margin settings</h1><p className="subhead">Configure corridor windows and the ±30 minute Nearly Corridor rule.</p></div></div>
+      <div className="page-heading compact"><div><p className="eyebrow">ADMINISTRATION</p><h1>Corridor & margin settings</h1><p className="subhead">Configure corridor windows, the ±30 minute Nearly Corridor rule, and import legacy Excel data.</p></div></div>
+      <ExcelImport />
       <section className="panel form-panel">
         <div className="panel-head"><div><p className="eyebrow">ADD CORRIDOR</p><h3>New corridor window</h3></div><Route size={19} /></div>
         <form onSubmit={save} className="field-grid" data-testid="create-corridor-form">
@@ -674,7 +796,8 @@ function AppInner() {
   else if (path === "/departments") page = <AnalyticsPage mode="department" />;
   else if (path === "/users") page = user.role === "admin" ? <UserManagement /> : <SimplePage title="Admin access required" eyebrow="ADMINISTRATION"><p data-testid="admin-access-denied">This area is restricted to administrators.</p></SimplePage>;
   else if (path === "/settings") page = user.role === "admin" ? <CorridorSettings /> : <SimplePage title="Admin access required" eyebrow="ADMINISTRATION"><p data-testid="admin-access-denied-settings">This area is restricted to administrators.</p></SimplePage>;
-  else page = <SimplePage title={path.includes("report") ? "Reports" : "Corridor analysis"} eyebrow="ANALYTICS WORKSPACE" />;
+  else if (path === "/reports") page = <ReportsStudio />;
+  else page = <SimplePage title="Corridor analysis" eyebrow="ANALYTICS WORKSPACE" />;
   return <Shell user={user} onLogout={() => { localStorage.removeItem("rbms_token"); setUser(null); }}>{page}</Shell>;
 }
 

@@ -1,13 +1,17 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, UploadFile, File
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date as date_cls
 from pathlib import Path
-import os, uuid, bcrypt, jwt, io, csv
+import os, uuid, bcrypt, jwt, io, csv, openpyxl
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -56,6 +60,9 @@ def hash_password(password): return bcrypt.hashpw(password.encode(), bcrypt.gens
 def safe_user(user):
     return {"id": user["id"], "employee_id": user["employee_id"], "name": user["name"], "role": user["role"], "department": user.get("department", ""), "status": user.get("status", "active")}
 def token(user): return jwt.encode({"sub": user["id"], "exp": datetime.now(timezone.utc) + timedelta(hours=8)}, JWT_SECRET, algorithm=ALGO)
+
+async def audit(block_id: str, actor: dict, action: str, detail: str = ""):
+    await db.audit_logs.insert_one({"id": str(uuid.uuid4()), "block_id": block_id, "actor_id": actor["employee_id"], "actor_name": actor["name"], "actor_role": actor["role"], "action": action, "detail": detail, "timestamp": now()})
 
 async def current_user(authorization: str = Header(default="")):
     if not authorization.startswith("Bearer "): raise HTTPException(401, "Please sign in")
@@ -135,6 +142,7 @@ async def create_block(data: BlockIn, user=Depends(require("admin", "officer", "
     doc = data.model_dump(); doc.update({"id": str(uuid.uuid4()), "block_id": f"RB-{datetime.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}", "duration": duration(data.allowed_start, data.allowed_end), "corridor_status": status, "corridor_start": corridor["corridor_start"], "corridor_end": corridor["corridor_end"], "status": "PENDING", "submitted_by": user["employee_id"], "conflict": bool(overlap), "created_at": now()})
     await db.blocks.insert_one(doc)
     doc.pop("_id", None)
+    await audit(doc["id"], user, "SUBMITTED", f"{data.major_section} · {data.allowed_start}-{data.allowed_end} · {data.department}")
     return {"block": doc, "conflicts": overlap}
 @api.patch("/blocks/{block_id}")
 async def decide(block_id: str, data: Decision, user=Depends(require("admin", "officer"))):
@@ -143,7 +151,12 @@ async def decide(block_id: str, data: Decision, user=Depends(require("admin", "o
     action = data.reason.split("|", 1)[0] if data.reason else "APPROVED"; reason = data.reason.split("|", 1)[1] if "|" in data.reason else ""
     if action not in ["APPROVED", "REJECTED", "MODIFICATION REQUESTED", "COMPLETED", "CANCELLED"]: action = "APPROVED"
     await db.blocks.update_one({"id": block_id}, {"$set": {"status": action, "decision_reason": reason, "approved_by": user["employee_id"], "updated_at": now()}})
+    await audit(block_id, user, action, reason or f"{action.title()} by {user['name']}")
     return {"ok": True, "status": action}
+@api.get("/blocks/{block_id}/audit")
+async def block_audit(block_id: str, user=Depends(current_user)):
+    logs = await db.audit_logs.find({"block_id": block_id}, {"_id": 0}).sort("timestamp", 1).to_list(200)
+    return logs
 @api.get("/slots")
 async def slots(date: str, major_section: str, line: str = "UP", min_duration: int = 60, user=Depends(require("admin", "officer"))):
     corridor = await db.corridors.find_one({"major_section": major_section}, {"_id": 0}); blocks = await db.blocks.find({"date": date, "major_section": major_section, "line": line, "status": {"$in": ["APPROVED", "PENDING"]}}, {"_id": 0}).to_list(100)
@@ -202,6 +215,110 @@ async def update_corridor(corridor_id: str, data: CorridorIn, user=Depends(requi
     r = await db.corridors.update_one({"id": corridor_id}, {"$set": data.model_dump()})
     if r.matched_count == 0: raise HTTPException(404, "Corridor not found")
     return {"ok": True}
+
+# ---- Reports (PDF) ----
+def _period_range(period: str):
+    today = datetime.now().date()
+    if period == "weekly": start = today - timedelta(days=7)
+    elif period == "monthly": start = today - timedelta(days=30)
+    else: start = today
+    return start.isoformat(), today.isoformat()
+
+@api.get("/reports/pdf")
+async def report_pdf(period: str = "daily", user=Depends(require("admin", "officer"))):
+    if period not in ("daily", "weekly", "monthly"): raise HTTPException(400, "period must be daily, weekly or monthly")
+    start, end = _period_range(period)
+    blocks = await db.blocks.find({"date": {"$gte": start, "$lte": end}}, {"_id": 0}).sort("date", 1).to_list(1000)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title=f"RBMS {period.title()} Report", topMargin=28, bottomMargin=28, leftMargin=24, rightMargin=24)
+    styles = getSampleStyleSheet()
+    story = []
+    title = Paragraph(f"<b>Railway Block Management · {period.title()} Report</b>", styles["Title"])
+    subtitle = Paragraph(f"Period: <b>{start}</b> → <b>{end}</b> &nbsp; · &nbsp; Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} &nbsp; · &nbsp; Prepared by: {user['name']} ({user['employee_id']})", styles["Normal"])
+    story += [title, Spacer(1, 6), subtitle, Spacer(1, 14)]
+    # summary
+    counts = {k: sum(1 for b in blocks if b.get("status") == k) for k in ["PENDING", "APPROVED", "REJECTED", "COMPLETED", "CANCELLED"]}
+    total_hours = round(sum(max(0, minutes(b["allowed_end"]) - minutes(b["allowed_start"])) for b in blocks) / 60, 1)
+    summary_rows = [["Total blocks", "Pending", "Approved", "Completed", "Rejected", "Cancelled", "Total hours"],
+                    [len(blocks), counts["PENDING"], counts["APPROVED"], counts["COMPLETED"], counts["REJECTED"], counts["CANCELLED"], f"{total_hours}h"]]
+    st = Table(summary_rows, hAlign="LEFT", colWidths=[80]*7)
+    st.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0f172a")), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#cbd5e1")), ("BACKGROUND", (0,1), (-1,1), colors.HexColor("#f1f5f9")), ("ALIGN", (0,0), (-1,-1), "CENTER"), ("FONTSIZE", (0,0), (-1,-1), 9), ("BOTTOMPADDING", (0,0), (-1,-1), 6), ("TOPPADDING", (0,0), (-1,-1), 6)]))
+    story += [st, Spacer(1, 18), Paragraph("<b>Block Register</b>", styles["Heading3"])]
+    # table
+    header = ["Block ID", "Date", "Section", "Dept", "Line", "Window", "Duration", "Corridor", "Status"]
+    rows = [header] + [[b.get("block_id",""), b.get("date",""), b.get("major_section",""), b.get("department",""), b.get("line",""), f"{b.get('allowed_start','')}-{b.get('allowed_end','')}", b.get("duration",""), b.get("corridor_status","").replace(" CORRIDOR",""), b.get("status","")] for b in blocks]
+    tbl = Table(rows, repeatRows=1, colWidths=[85, 62, 100, 70, 40, 78, 55, 90, 70])
+    tbl.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0f172a")), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 8.5), ("GRID", (0,0), (-1,-1), 0.3, colors.HexColor("#e2e8f0")), ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#f8fafc")]), ("VALIGN", (0,0), (-1,-1), "MIDDLE")]))
+    story.append(tbl)
+    if not blocks: story.append(Paragraph("<i>No blocks in this period.</i>", styles["Italic"]))
+    doc.build(story); buf.seek(0)
+    return StreamingResponse(iter([buf.getvalue()]), media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=rbms-{period}-report.pdf"})
+
+# ---- Excel import (admin) ----
+def _norm(v): return "" if v is None else str(v).strip()
+def _time(v):
+    if v is None: return ""
+    if hasattr(v, "strftime"): return v.strftime("%H:%M")
+    s = str(v).strip()
+    if ":" in s: parts = s.split(":"); return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    return s
+def _date(v):
+    if v is None: return ""
+    if hasattr(v, "strftime"): return v.strftime("%Y-%m-%d")
+    return str(v)[:10]
+
+@api.post("/admin/import")
+async def excel_import(file: UploadFile = File(...), user=Depends(require("admin"))):
+    if not file.filename.lower().endswith(".xlsx"): raise HTTPException(400, "Please upload a .xlsx file")
+    contents = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+    except Exception as e:
+        raise HTTPException(400, f"Could not read workbook: {e}")
+    # Try to find the data-log style sheet automatically
+    target_sheet = None
+    for name in wb.sheetnames:
+        if any(k in name.lower() for k in ["log", "data", "entry", "block"]):
+            target_sheet = wb[name]; break
+    target_sheet = target_sheet or wb[wb.sheetnames[0]]
+    rows = list(target_sheet.iter_rows(values_only=True))
+    if not rows: return {"imported": 0, "skipped": 0, "errors": ["Sheet is empty"]}
+    # find header row (first row with a "date" cell)
+    header_idx = 0
+    for i, row in enumerate(rows[:10]):
+        joined = " ".join(_norm(c).lower() for c in row if c is not None)
+        if "date" in joined and ("section" in joined or "block" in joined): header_idx = i; break
+    headers = [_norm(c).lower() for c in rows[header_idx]]
+    def col(row, *keys):
+        for k in keys:
+            for i, h in enumerate(headers):
+                if k in h: return row[i]
+        return None
+    imported, skipped, errors = 0, 0, []
+    for row in rows[header_idx + 1:]:
+        if not row or all(c is None or _norm(c) == "" for c in row): continue
+        d = _date(col(row, "date of block", "date"))
+        sec = _norm(col(row, "major section", "section"))
+        if not d or not sec: skipped += 1; continue
+        start = _time(col(row, "allowed from", "block allowed from", "from"))
+        end = _time(col(row, "allowed upto", "block allowed upto", "upto", "to"))
+        if not start or not end: skipped += 1; continue
+        dept = _norm(col(row, "dept", "department")) or "Other"
+        line = _norm(col(row, "line")) or "UP"
+        desc = _norm(col(row, "block description", "description")) or "Imported block"
+        cancel_type = _norm(col(row, "cancelled rt", "cancellation")) or "Normal"
+        remarks = _norm(col(row, "remarks"))
+        rbp = "yes" in _norm(col(row, "rbp")).lower()
+        corridor = await db.corridors.find_one({"major_section": sec}, {"_id": 0})
+        cstatus = corridor_status(start, end, corridor["corridor_start"], corridor["corridor_end"]) if corridor else "UNKNOWN"
+        doc = {"id": str(uuid.uuid4()), "block_id": f"RB-IMP-{uuid.uuid4().hex[:6].upper()}", "date": d, "major_section": sec, "sub_section": "Sec 1", "department": dept, "line": line, "description": desc, "allowed_start": start, "allowed_end": end, "duration": duration(start, end), "corridor_status": cstatus, "corridor_start": corridor["corridor_start"] if corridor else "", "corridor_end": corridor["corridor_end"] if corridor else "", "status": "APPROVED", "submitted_by": user["employee_id"], "cancellation_type": cancel_type, "is_rbp": rbp, "remarks": remarks, "created_at": now()}
+        try:
+            await db.blocks.insert_one(doc)
+            await audit(doc["id"], user, "IMPORTED", f"From {file.filename}")
+            imported += 1
+        except Exception as e:
+            errors.append(str(e)); skipped += 1
+    return {"imported": imported, "skipped": skipped, "errors": errors[:5], "sheet": target_sheet.title}
 
 @api.get("/")
 async def root(): return {"message":"Railway Block Management API"}
