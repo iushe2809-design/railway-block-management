@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 6 retest (frontend only) – all three previously-flagged flows now PASS. (1) Free Slot Finder auto-runs find() on mount: navigating to /slots as OFFICER001 renders 8 slot rows immediately with NO click on 'Find slots'. (2) Cross-navigation live refresh: on default view (2026-08-25, MURI-GDBR, UP), 06:00–08:00 was Available. Submitted a new block RB-260901-* for 06:00–08:00 via /new, then clicked back to Free Slot Finder without pressing Find — slot-row-0 immediately shows Occupied (auto-run useEffect on mount picked up the new block; 10-second useLiveRefresh poll is also armed). (3) Dashboard 'Overall compliance' now shows 76% (was 400%) – comfortably within 0–100%. Sr.DOM display name and other iteration-5 items unchanged.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Free Slot Finder", "issues": ["Slot Finder resets date/section/line to defaults on remount – user's last search is not preserved across navigation. Not part of the spec but worth noting; the requested live-refresh works because auto-run always fetches for the default (or current) filters."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_5.json",
+    "/app/backend/tests/test_rbms_iteration5.py",
+    "/app/backend/tests/test_rbms_regression.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "App.js Slots(): useEffect(()=>{find();},[]) correctly triggers on mount; useLiveRefresh(()=>{if(date&&section)find();},10000) keeps view fresh while mounted and after 'rbms:refresh' event bus fires from a new block submit.",
+    "Dashboard compliance-foot formula now divides (compliance[0]+compliance[1]) by total sum, so it can never exceed 100%. Consider labeling the metric explicitly (e.g., 'Adherence rate = Strictly-Inside + Inside / Total').",
+    "Slots() still uses local date/section/line state initialised to defaults, so user-selected filters are lost on remount – acceptable per current spec but could be lifted to URL params for real preservation."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not retested (frontend-only request)", "frontend": "3/3 retested flows PASS"},
+  "test_credentials": "OFFICER001/Officer@123 (verified). ADMIN001/Admin@123, USER001/User@123 unchanged.",
+  "seed_data_creation": "Added 2 test blocks via UI during retest: 2026-08-25 MURI-GDBR UP 06:00-08:00 (TEST_retest_06:00_08:00) and 2026-09-15 MURI-GDBR DN 18:00-20:00 (TEST_retest_slot_18_20). No cleanup endpoint available.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All previously-open issues from iteration_5 are resolved. Slot Finder now auto-runs on mount, live-refresh across navigation works, and Overall compliance % is sane (76%). Note that Slots() resets its filters (date/section/line) to defaults on remount – if a future spec asks to preserve the user's last query across navigation, main agent will need to lift state to Context or URL params.",
+  "rca of the issue": "iteration_5 gap was that SlotFinder's local state (hasRun/slots) was discarded on unmount; main agent addressed it by adding useEffect(()=>find(),[]) on mount and by fixing Dashboard compliance denominator. Both fixes verified end-to-end via UI in this iteration."
+}

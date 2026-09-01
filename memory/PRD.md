@@ -1,48 +1,25 @@
 # Railway Block Management System — PRD
 
-## Original Problem Statement
-Build a professional responsive Railway Block Management & Corridor Availability App to replace the Excel-based railway block data-entry and corridor-checking system. It must support Block Data Entry User, Officer, and Admin roles; secure login; block creation; automatic duration and corridor validation; free slot finding; calendar/timeline; section and department analysis; cancellation and demanded-vs-allowed reporting; approval workflow; conflict detection; notifications; search; reports; Excel import/export; audit-ready history; and preserve the uploaded workbook's fields and ±30-minute Nearly Corridor rule.
+## Iteration 5–6 (current)
+- Officer display name renamed A. Kumar → Sr.DOM (seed upsert, no data loss)
+- Live auto-refresh across Dashboard, Blocks, Free Slot Finder, Notifications, Calendar, Analytics
+  - 8–10s polling + `rbms:refresh` event bus fired on POST /blocks
+- Notification bell dropdown (top nav) with unread pending count
+- Calendar / Timeline view (Day) with corridor overlay & coloured status blocks
+- Admin Control Panel:
+  - /users — create/deactivate users
+  - /settings — add/edit corridor timings (start, end, margin)
+- Section-wise & Department-wise analytics tables (live)
+- Dashboard "Overall compliance" %: divides Strict+Nearly by total of compliance buckets (bounded 0-100%)
 
-## Architecture Decisions
-- React 19 + React Router + Tailwind-compatible CSS for the responsive control-room interface.
-- FastAPI + Motor/MongoDB using the protected `MONGO_URL` and `DB_NAME` environment variables.
-- JWT bearer sessions with bcrypt-hashed demo credentials and server-side role checks.
-- Workbook-derived section, department, line, cancellation, RBP, corridor, and sample block data are seeded into MongoDB.
-- Corridor validation is calculated in both the API and live form: strict, nearly ±30m, partial overlap, or completely outside.
+## Roles / seed accounts
+- ADMIN001 / Admin@123 (Admin Control)
+- OFFICER001 / Officer@123 (Sr.DOM)
+- USER001 / User@123 (R. Singh)
 
-## Personas
-- Data Entry User: enters and tracks their own block requests.
-- Officer: reviews all blocks, validates availability, finds slots, and approves/rejects requests.
-- Admin: full operational access and future administration controls.
-
-## Core Requirements
-- Role-aware sign-in and protected routes.
-- Auto-calculated duration, corridor status, conflict flag, and free slots.
-- Approval workflow with pending, approved, rejected, and modification-ready status model.
-- Railway-style dashboard with KPIs, section volume, lifecycle, and compliance snapshot.
-- Responsive sidebar, searchable block register, slot finder, and calendar/analysis route foundations.
-- CSV report export and shareable preview URL.
-
-## Implemented — 2026-08-25
-- Secure demo login for ADMIN001, OFFICER001, and USER001.
-- Dashboard, new request form, live corridor panel, duration calculator, block registry, search/filter, approval actions, slot finder, slot reuse navigation, access restrictions, CSV export, responsive mobile navigation.
-- Workbook fields and corridor examples preserved in seeded data.
-- Backend API smoke tests and full browser regression completed with no blocking issues.
-
-## Prioritized Backlog
-### P0
-- Connect the remaining analysis routes to real aggregated report endpoints.
-- Add persistent notification records and audit log viewer.
-
-### P1
-- Add Excel upload/import mapping for the workbook's Data Log and Corridor sheets.
-- Add PDF/XLSX report generation and admin corridor/dropdown settings.
-- Add explicit modification-request modal with required comments.
-
-### P2
-- Add month/week calendar event rendering, backup export, user deactivation, and department management screens.
-
-## Next Tasks
-1. Build the admin settings and user-management APIs.
-2. Add real calendar and department/section aggregation pages.
-3. Add Excel import and PDF/XLSX report formats.
+## Backlog
+- P1: True .xlsx import/export (currently CSV)
+- P1: Reports page + PDF export
+- P2: Demanded vs Allowed vs Availed analysis charts
+- P2: Cancellation analysis dedicated page
+- P2: Preserve Slot Finder filter state across route navigation (URL params)

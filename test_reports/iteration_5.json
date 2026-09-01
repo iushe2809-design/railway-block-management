@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 5 verified: (1) Sr.DOM rename PASS, (2) Dashboard live auto-refresh KPI 3→4 PASS, (3) Notification bell reflects new blocks PASS, (4) Calendar timeline shows seeded blocks on 2026-08-18 PASS, (5) Admin User Management create+deactivate PASS, (6) Admin Corridor Settings add PASS, (7) Backend RBAC + corridor validation buckets + admin CRUD all PASS (12/12 pytest). One deviation: Free Slot Finder does NOT preserve slot list when user navigates away and returns without clicking Find again, so the requested 'auto-switch Available→Occupied on return' cannot fire.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Free Slot Finder live refresh after new-block submit",
+        "issue": "SlotFinder component state (slots list + hasRun flag) is discarded when the user navigates away to /new and returns to /slots. useLiveRefresh polling only runs when hasRun===true, and hasRun resets to false on remount, so the returning user sees an empty slot list until they click 'Find slots' again. The expected 10:00–12:00 Available→Occupied live update therefore does not occur on nav-back. Backend /api/slots correctly reports the new overlap (verified via pytest).",
+        "affected_selectors": ["[data-testid='slot-row-*']", "[data-testid='find-slots-button']"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Dashboard - Compliance snapshot",
+        "issues": ["'Overall compliance' shows 400% because it appears to sum-instead-of-average all four compliance buckets; low priority but visually misleading."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_rbms_iteration5.py",
+    "/app/backend/tests/test_rbms_regression.py",
+    "/app/test_reports/pytest/pytest_iteration5.xml"
+  ],
+  "action_items": [
+    "Persist SlotFinder state across navigation OR auto-run find() on mount when a valid date+section+line combination exists, so that returning to /slots reflects the latest data without requiring another button click.",
+    "(Optional cosmetic) Fix Overall compliance percentage calculation on Dashboard (currently displays 400%)."
+  ],
+  "critical_code_review_comments": [
+    "server.py seed() correctly upserts the Sr.DOM name on existing OFFICER001 without wiping data.",
+    "useLiveRefresh hook + 'rbms:refresh' event bus works for Dashboard, Notifications, Blocks list, Calendar and Analytics; only SlotFinder is state-bound to a manual Find click, which breaks the spec on cross-page navigation.",
+    "Admin endpoints correctly RBAC-guarded (data_entry→403, officer→403, admin→200) and exclude _id via projection.",
+    "Consider adding an index on blocks.date to keep dashboard/list queries fast as volume grows.",
+    "Deactivated user login is blocked at /api/auth/login with 403 as expected."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_rbms_iteration5.py",
+    "/app/test_reports/iteration_5.json",
+    "/app/test_reports/pytest/pytest_iteration5.xml"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "6/7 flows (Slot Finder live refresh on nav-back is the exception)"},
+  "test_credentials": "ADMIN001/Admin@123, OFFICER001/Officer@123 (name=Sr.DOM), USER001/User@123",
+  "seed_data_creation": "Added: TEST_corridor_* blocks on 2026-09-01, TEST_notif_marker on 2026-09-02, TEST_slot_overlap on 2026-09-03, TEST_slot_live_ui/dashboard on 2026-08-25 and today, TESTQA* user and TEST-SEC-* corridor rows. No cleanup endpoint available.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend and 6/7 UI flows are green. Only remaining gap is Slot Finder auto-refresh across route navigation — main agent should either (a) auto-run find() on mount when defaults are set, or (b) hoist SlotFinder state to a parent/context so 'hasRun' survives remount. After fix, re-run the frontend Slot Finder segment only.",
+  "rca of the issue": "SlotFinder in /app/frontend/src/App.js (~line 385) stores slots + hasRun in local component state; navigating to /new causes React to unmount the component, so hasRun becomes false on return. useLiveRefresh's polling callback checks hasRun and returns early, so no re-fetch occurs and the slot list is empty until the user clicks Find slots again. Backend GET /api/slots is fine (verified). Fix options: (1) auto-invoke find() in a useEffect on mount when date+section are present, (2) lift slots/hasRun into a top-level store or React Context so state persists across route changes, or (3) memoize the search params in URL and drive fetch from location."
+}

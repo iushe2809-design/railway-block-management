@@ -28,3 +28,38 @@ document.addEventListener("click", (event) => {
       .catch(() => window.dispatchEvent(new CustomEvent("rbms-export-error")));
   }
 }, true);
+
+const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem("rbms_token")}` });
+const refreshDashboard = async () => {
+  if (!localStorage.getItem("rbms_token")) return;
+  try {
+    const response = await fetch(`${API}/dashboard`, { headers: authHeaders() });
+    if (!response.ok) return;
+    const data = await response.json();
+    const values = [data.total, data.active, data.pending, `${data.hours}h`];
+    ["total-blocks-today", "currently-active", "awaiting-approval", "total-block-hours"].forEach((id, index) => {
+      const card = document.querySelector(`[data-testid="kpi-${id}"] strong`);
+      if (card) card.textContent = values[index];
+    });
+  } catch (_) { /* transient polling failures should not interrupt the workspace */ }
+};
+
+const refreshNotifications = async () => {
+  if (!localStorage.getItem("rbms_token")) return;
+  try {
+    const response = await fetch(`${API}/notifications`, { headers: authHeaders() });
+    if (!response.ok) return;
+    const items = await response.json();
+    const button = document.querySelector('[data-testid="notifications-button"]');
+    if (!button) return;
+    button.dataset.notificationCount = String(items.length);
+    button.title = `${items.length} live notifications`;
+  } catch (_) { /* keep the last known notification state */ }
+};
+
+window.setInterval(() => {
+  refreshDashboard();
+  refreshNotifications();
+}, 10000);
+refreshDashboard();
+refreshNotifications();
