@@ -415,7 +415,8 @@ function Slots() {
     try { const r = await api.get(`/slots?date=${date}&major_section=${encodeURIComponent(section)}&line=${line}&min_duration=60`, hdr()); setSlots(r.data); } catch (_) { }
   }, [date, section, line]);
   // auto-run on mount so returning to this page always shows the freshest slots
-  useEffect(() => { find(); /* eslint-disable-next-line */ }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { find(); }, []);
   useLiveRefresh(() => { if (date && section) find(); }, 10000);
   return (
     <>
